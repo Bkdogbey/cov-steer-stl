@@ -23,7 +23,8 @@ class PlanResult:
     V: torch.Tensor                 # [T, nu]     best feedforward
     K: torch.Tensor                 # [T, nu, nx] best gains
     best_p: float                   # best P(φ) achieved
-    history: List[float] = field(default_factory=list)
+    history: List[float] = field(default_factory=list)    # loss per iteration
+    p_history: List[float] = field(default_factory=list)  # P(φ) per iteration
 
 
 class BasePlanner:
@@ -94,7 +95,7 @@ class BasePlanner:
         stl_trace = spec(traj)
         p_sat = stl_trace[0, 0, 0]
 
-        J = compute_loss(p_sat, V, K, result.mu_trace, self.env, self.dyn, self.weights)
+        J = compute_loss(p_sat, V, K, result.mu_trace, result.Sigma_trace, self.env, self.dyn, self.weights)
         J.backward()
         optimizer.step()
 

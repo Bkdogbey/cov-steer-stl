@@ -1,6 +1,19 @@
-"""Configuration loading, device selection, and run control."""
+"""Configuration loading, device selection, and run control.
 
-import os
+PATH CONVENTION (important):
+    This file lives at src/utils/config.py.
+    _ROOT resolves 3 levels up:  config.py → utils/ → src/ → <project_root>/
+
+    The project uses PYTHONPATH=src so all imports are bare:
+        from utils.config import ...   ← works when PYTHONPATH=src
+        from dynamics import ...       ← works when PYTHONPATH=src
+
+    Do NOT change these to relative imports (from .config import ...) unless
+    you also restructure src/ as a proper package and update every import site.
+    The bare-import convention is intentional and load-bearing for the test
+    suite and main.py.
+"""
+
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -8,16 +21,31 @@ from pathlib import Path
 import torch
 import yaml
 
-
-# ── Project root (two levels up from this file) ──────────────────────
+# Project root: src/utils/config.py → .parent = utils/ → .parent = src/ → .parent = root/
 _ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-def get_device():
+def resolve_device(device_str: str) -> str:
+    """Resolve a device string to a concrete torch device name.
+
+    "auto" → "cuda" if torch.cuda.is_available() else "cpu"
+    "cuda" / "cpu" → passed through unchanged.
+    """
+    if device_str == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return device_str
+
+
+def get_device() -> torch.device:
+    """Return the auto-selected torch.device.
+
+    Prefer reading device from cfg["device"] (set by load_scenario) in new
+    code. This function is kept for backward compatibility.
+    """
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def load_config(path):
+def load_config(path) -> dict:
     """Load a YAML file. Relative paths resolve from project root."""
     p = Path(path)
     if not p.is_absolute():
@@ -26,7 +54,7 @@ def load_config(path):
         return yaml.safe_load(f)
 
 
-def deep_merge(base, override):
+def deep_merge(base: dict, override: dict) -> dict:
     """Recursively merge *override* into *base* (mutates base)."""
     for k, v in override.items():
         if k in base and isinstance(base[k], dict) and isinstance(v, dict):
@@ -36,32 +64,40 @@ def deep_merge(base, override):
     return base
 
 
-def load_scenario(scenario_path):
+def load_scenario(scenario_path) -> tuple:
     """Load scenario config merged with defaults.
 
-    Returns (cfg, dynamics_cfg) where dynamics_cfg is loaded from the
-    path specified in cfg['dynamics'].
+    Device is resolved once here so callers never need to call get_device().
+
+    Returns:
+        (cfg, dyn_cfg) where:
+          cfg["device"] is a concrete string ("cuda" or "cpu")
+          dyn_cfg is the dynamics sub-config dict
     """
     cfg = load_config(scenario_path)
     defaults = load_config("configs/defaults.yaml")
     merged = deep_merge(defaults, cfg)
+    merged["device"] = resolve_device(merged.get("device", "auto"))
     dyn_cfg = load_config(merged["dynamics"])
     return merged, dyn_cfg
 
 
-# ── Skip / run blocks (for main.py) ─────────────────────────────────
+# ── Skip / run context manager ───────────────────────────────────────
 
 class _SkipWith(Exception):
     pass
 
 
 @contextmanager
-def skip_run(flag, label):
-    """Context manager to skip or run a code block.
+def skip_run(flag: str, label: str):
+    """Context manager to conditionally skip or run a code block.
 
     Usage:
         with skip_run("run", "My Experiment") as check, check():
             do_stuff()
+
+        with skip_run("skip", "My Experiment") as check, check():
+            do_stuff()   # never executed
     """
     @contextmanager
     def check():

@@ -87,3 +87,62 @@ def plot_trajectory(ax, mu_np, Sigma_np, env, T, title=None, ellipse_step=2, k=2
 
     ax.plot(mu_np[0, 0], mu_np[0, 1], "ko", ms=8)
     ax.plot(mu_np[-1, 0], mu_np[-1, 1], "bs", ms=8)
+
+
+def plot_control_sequence(result, dt, dyn=None, save_path=None):
+    """Plot the feedforward control sequence and feedback gain norms over time.
+
+    Args:
+        result:    PlanResult — uses result.V [T, nu] and result.K [T, nu, nx]
+        dt:        float — timestep in seconds (x-axis label)
+        dyn:       optional BaseDynamics — if provided, shows bounded u = u_max*tanh(V)
+                   instead of raw V params
+        save_path: optional str/Path — saved as PNG if provided
+
+    Returns:
+        fig: matplotlib Figure
+    """
+    import torch
+
+    V_np = result.V.detach().cpu().numpy()   # [T, nu]
+    K_np = result.K.detach().cpu().numpy()   # [T, nu, nx]
+    T, nu = V_np.shape
+    time = [t * dt for t in range(T)]
+
+    if dyn is not None:
+        with torch.no_grad():
+            u_bounded = dyn.bound_control(result.V).cpu().numpy()
+        y_data = u_bounded
+        y_label = "Control input u"
+        legend_prefix = "u"
+    else:
+        y_data = V_np
+        y_label = "Feedforward param V (raw)"
+        legend_prefix = "v"
+
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+    fig, ax1 = plt.subplots(figsize=(10, 4))
+
+    for i in range(nu):
+        ax1.step(time, y_data[:, i], where="post",
+                 color=colors[i % len(colors)], lw=1.8,
+                 label=f"${legend_prefix}_{i}$")
+    ax1.axhline(0, color="k", lw=0.5, ls="--")
+    ax1.set_xlabel("Time [s]", fontsize=12)
+    ax1.set_ylabel(y_label, fontsize=12)
+    ax1.legend(loc="upper left", fontsize=10)
+    ax1.grid(True, alpha=0.3)
+
+    # K gain norms on secondary axis (only if non-trivial)
+    K_norms = np.linalg.norm(K_np, axis=(1, 2))   # [T]
+    if K_norms.max() > 1e-8:
+        ax2 = ax1.twinx()
+        ax2.plot(time, K_norms, "k--", lw=1.5, alpha=0.6, label=r"$\|K_t\|_F$")
+        ax2.set_ylabel(r"$\|K_t\|_F$", fontsize=12)
+        ax2.legend(loc="upper right", fontsize=10)
+
+    ax1.set_title("Control Sequence", fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    return fig

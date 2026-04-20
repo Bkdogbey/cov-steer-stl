@@ -1,18 +1,26 @@
 # Shared optimizer defaults — scenarios override as needed
+
+device: "auto"        # "auto" resolves to cuda if available, else cpu
+save_dir: "data/results"  # output directory for plots and animations
+animate: false        # produce GIF animation after run_comparison (override per-scenario)
+
 optimizer:
   lr_v: 0.05
   lr_k: 0.005
   max_iters: 500
-  converge_patience: 20
+  converge_patience: 20  # stop if no improvement in this many iterations
   loss_tol: 1.0e-6
   min_iters: 50
 
 weights:
-  w_phi: 1.0       # -log(SRM) weight
-  w_u: 0.001       # control effort
-  w_du: 0.0005     # control smoothness
-  w_K: 0.0005      # feedback gain regularization
-  w_dist: 0.05     # terminal goal distance
-  w_obs: 0.0       # obstacle repulsion (auxiliary)
+  w_phi: 1.0             # (1) pdSTL satisfaction: -log(p_sat)
+  w_trace: 0.01          # (2) trajectory covariance trace: sum_k tr(Σ_k[:2,:2])
+  w_trace_terminal: 0.1  # (3) terminal covariance trace: tr(Σ_T[:2,:2])
+  w_dist: 0.05           # (4) terminal goal distance
+  w_u: 0.001             # (5) control effort
+  w_du: 0.0005           # (6) control smoothness
+  w_K: 0.0005            # (7) feedback gain regularization
+  w_repulsion: 0.5      # (8) obstacle repulsion: ReLU(margin - dist)^2
+  obs_margin: 0.5       # safety buffer around obstacles (metres)
 
-alpha: 0.95          # satisfaction threshold for early stop
+alpha: 0.95              # satisfaction threshold for early stop

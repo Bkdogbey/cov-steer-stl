@@ -15,10 +15,15 @@ class SingleShotPlanner(BasePlanner):
         best_V, best_K = V.data.clone(), K.data.clone()
         best_result = None
         history = []
+        p_history = []
+        converged_iters = 0
+        patience = self.opt_cfg.get("converge_patience", 20)
+        alpha = self.cfg.get("alpha", 0.95)
 
         for k in range(self.opt_cfg["max_iters"]):
             p_sat, loss, result = self._optimize_step(V, K, mu0, Sigma0, spec, optimizer)
             history.append(loss)
+            p_history.append(p_sat)
 
             if p_sat > best_p:
                 best_p = p_sat
@@ -30,10 +35,14 @@ class SingleShotPlanner(BasePlanner):
                 K_norm = K.data.norm().item()
                 print(f"  iter {k:4d} | loss={loss:.4f} | P(φ)={p_sat:.4f} | ||K||={K_norm:.3f}")
 
-            if best_p >= self.cfg.get("alpha", 0.95):
-                if verbose:
-                    print(f"  Converged at iter {k}, P(φ)={best_p:.4f}")
-                break
+            if best_p >= alpha:
+                converged_iters += 1
+                if converged_iters >= patience:
+                    if verbose:
+                        print(f"  Converged at iter {k}, P(φ)={best_p:.4f}")
+                    break
+            else:
+                converged_iters = 0
 
         return PlanResult(
             mu_trace=best_result.mu_trace.detach(),
@@ -42,4 +51,5 @@ class SingleShotPlanner(BasePlanner):
             K=best_K,
             best_p=best_p,
             history=history,
+            p_history=p_history,
         )

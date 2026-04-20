@@ -1,3 +1,4 @@
-from visualization.trajectory import plot_trajectory, draw_env, cov_ellipse_params
+from visualization.trajectory import plot_trajectory, draw_env, cov_ellipse_params, plot_control_sequence
 from visualization.convergence import plot_convergence
 from visualization.comparison import plot_comparison
+from visualization.animation import animate_trajectory

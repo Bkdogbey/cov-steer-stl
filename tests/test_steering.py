@@ -8,8 +8,7 @@ from steering.closed_loop import ClosedLoopSteerer
 
 
 @pytest.fixture
-def setup():
-    device = torch.device("cpu")
+def setup(device):
     dyn = DoubleIntegrator(dt=0.2, u_max=2.5, D_diag=0.03, device=device)
     T, nx, nu = 10, 4, 2
     mu0 = torch.tensor([0.0, 0.0, 1.0, 0.0], device=device)
@@ -53,6 +52,7 @@ def test_closed_loop_covariance_is_psd(setup):
         assert (eigs >= -1e-6).all(), f"Negative eigenvalue at t={t}: {eigs}"
 
 
+@pytest.mark.slow
 def test_gradient_flows_through_K(setup):
     """∂(loss)/∂K must be nonzero — gradients flow through covariance steering."""
     dyn, T, nx, nu, mu0, Sigma0, V_data, _ = setup
@@ -69,6 +69,7 @@ def test_gradient_flows_through_K(setup):
     assert K.grad.abs().sum() > 0, "K.grad is all zeros"
 
 
+@pytest.mark.slow
 def test_gradient_flows_through_V(setup):
     """∂(loss)/∂V must be nonzero — gradients flow through mean propagation."""
     dyn, T, nx, nu, mu0, Sigma0, V_data, K_zero = setup
@@ -84,6 +85,7 @@ def test_gradient_flows_through_V(setup):
     assert V.grad.abs().sum() > 0, "V.grad is all zeros"
 
 
+@pytest.mark.slow
 def test_nonzero_K_shrinks_covariance(setup):
     """A stabilising K should produce smaller terminal covariance than K=0."""
     dyn, T, nx, nu, mu0, Sigma0, V, K_zero = setup

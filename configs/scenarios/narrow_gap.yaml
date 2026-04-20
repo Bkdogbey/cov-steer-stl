@@ -32,3 +32,7 @@ optimizer:
   max_iters: 500
   lr_v: 0.05
   lr_k: 0.005
+
+weights:
+  w_repulsion: 0.8
+  obs_margin: 0.4    # smaller margin so planner can still thread the gap

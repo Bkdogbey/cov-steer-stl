@@ -33,3 +33,7 @@ obstacles:
 planner:
   type: single_shot
   steering: closed_loop
+
+weights:
+  w_repulsion: 1.0   # stronger — mixed rectangular + circular obstacles
+  obs_margin: 0.6
