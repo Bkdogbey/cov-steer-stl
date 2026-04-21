@@ -7,12 +7,10 @@ Usage:
 
 from planning.base import BasePlanner, PlanResult
 from planning.single_shot import SingleShotPlanner
-from planning.mpc import MPCPlanner
 from planning.environment import Environment, build_environment
 
 _REGISTRY = {
     "single_shot": SingleShotPlanner,
-    "mpc": MPCPlanner,
 }
 
 

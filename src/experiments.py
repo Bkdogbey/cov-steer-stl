@@ -51,14 +51,30 @@ def setup_scenario(scenario_path):
 
 
 def run_scenario(scenario_path, verbose=True):
-    """Run a single scenario end-to-end.
-
-    Returns:
-        (PlanResult, env, cfg)
-    """
+    """Run a single scenario end-to-end. Returns (PlanResult, env, cfg)."""
     cfg, dyn_cfg, dynamics, steerer, env, mu0, Sigma0 = setup_scenario(scenario_path)
     planner = get_planner(cfg, dynamics, steerer, env)
     result = planner.solve(mu0, Sigma0, verbose=verbose)
+    return result, env, cfg
+
+
+def run_scenario_plot(scenario_path, verbose=True):
+    """Run a single scenario and save/show a trajectory plot."""
+    result, env, cfg = run_scenario(scenario_path, verbose=verbose)
+    save_dir = cfg.get("save_dir", "data/results")
+    label = cfg.get("label", "scenario").lower().replace(" ", "_")
+    os.makedirs(save_dir, exist_ok=True)
+
+    mu_np = result.mu_trace.detach().cpu().squeeze().numpy()
+    S_np = result.Sigma_trace.detach().cpu().squeeze().numpy()
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    plot_trajectory(ax, mu_np, S_np, env, cfg["horizon"],
+                    title=f"{cfg.get('label', 'Scenario')}  |  P(φ)={result.best_p:.3f}")
+    plt.tight_layout()
+    save_path = os.path.join(save_dir, f"{label}_trajectory.png")
+    fig.savefig(save_path, dpi=150)
+    plt.show()
     return result, env, cfg
 
 
