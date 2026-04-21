@@ -3,4 +3,5 @@ __pycache__/
 .pytest_cache/
 dist/
 *.egg-info/
-data/results/
+data/results/*
+LIGHTINING.md
