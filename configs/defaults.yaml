@@ -22,3 +22,8 @@ weights:
   obs_margin: 0.5       # safety buffer around obstacles (metres)
 
 alpha: 0.95              # satisfaction threshold for early stop
+
+mpc:
+  horizon: 10    # look-ahead window H (steps); must be <= total horizon T
+  iters: 100     # optimizer iterations per MPC step
+  n_starts: 1    # random restarts per step (1 = warm-start only, >1 adds random inits)

@@ -7,10 +7,12 @@ Usage:
 
 from planning.base import BasePlanner, PlanResult
 from planning.single_shot import SingleShotPlanner
+from planning.receding_horizon import RecedingHorizonPlanner
 from planning.environment import Environment, build_environment
 
 _REGISTRY = {
     "single_shot": SingleShotPlanner,
+    "receding_horizon": RecedingHorizonPlanner,
 }
 
 

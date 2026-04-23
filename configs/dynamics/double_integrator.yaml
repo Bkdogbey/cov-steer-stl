@@ -1,6 +1,6 @@
 type: double_integrator
 dt: 0.2
 u_max: 2.5
-D_diag: 0.003    # process noise std per state dim
+D_diag: 0.3    # process noise std per state dim
 nx: 4
 nu: 2

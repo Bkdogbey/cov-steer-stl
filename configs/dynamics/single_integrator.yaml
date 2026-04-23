@@ -1,6 +1,6 @@
 type: single_integrator
 dt: 0.2
-u_max: 1.0
+u_max: 3.0
 D_diag: 0.05    # process noise std per state dim
 nx: 2
 nu: 2
