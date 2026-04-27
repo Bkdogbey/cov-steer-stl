@@ -20,11 +20,11 @@ from experiments import run_comparison, run_scenario_plot, run_joint_noise_sweep
 
 
 # ── 1. Narrow Gap: MPC Covariance Steering ───────────────────────────
-with skip_run("run", "Narrow Gap — MPC Cov Steering") as check, check():
+with skip_run("skip", "Narrow Gap — MPC Cov Steering") as check, check():
     run_mpc_scenario("configs/scenarios/narrow_gap.yaml", mc_samples=1000)
 
 # ── 1b. Narrow Gap: Open-Loop vs Single-Shot Comparison ──────────────
-with skip_run("skip", "Narrow Gap — Single-Shot Comparison") as check, check():
+with skip_run("run", "Narrow Gap — Single-Shot Comparison") as check, check():
     run_comparison("configs/scenarios/narrow_gap_single_shot.yaml")
 
 

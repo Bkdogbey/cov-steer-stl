@@ -5,9 +5,8 @@ from planning.base import BasePlanner, PlanResult
 
 class SingleShotPlanner(BasePlanner):
 
-    def solve(self, mu0, Sigma0, T=None, spec=None, init_V=None, verbose=True):
-        T = T or self.cfg["horizon"]
-        spec = spec or self.env.get_specification(T)
+    def _run_one_solve(self, T, mu0, Sigma0, spec, init_V, verbose, label=""):
+        """One full optimization pass. Returns (best_p, best_V, best_K, best_result, history, p_history)."""
         V, K = self._init_params(T, init_V)
         optimizer = self._build_optimizer(V, K)
 
@@ -33,16 +32,37 @@ class SingleShotPlanner(BasePlanner):
 
             if verbose and k % 50 == 0:
                 K_norm = K.data.norm().item()
-                print(f"  iter {k:4d} | loss={loss:.4f} | P(phi)={p_sat:.4f} | ||K||={K_norm:.3f}")
+                print(f"  {label}iter {k:4d} | loss={loss:.4f} | P(phi)={p_sat:.4f} | ||K||={K_norm:.3f}")
 
             if best_p >= alpha:
                 converged_iters += 1
                 if converged_iters >= patience:
                     if verbose:
-                        print(f"  Converged at iter {k}, P(phi)={best_p:.4f}")
+                        print(f"  {label}Converged at iter {k}, P(phi)={best_p:.4f}")
                     break
             else:
                 converged_iters = 0
+
+        return best_p, best_V, best_K, best_result, history, p_history
+
+    def solve(self, mu0, Sigma0, T=None, spec=None, init_V=None, verbose=True):
+        T = T or self.cfg["horizon"]
+        spec = spec or self.env.get_specification(T)
+        n_restarts = self.opt_cfg.get("n_restarts", 1)
+
+        best_p, best_V, best_K, best_result, history, p_history = \
+            self._run_one_solve(T, mu0, Sigma0, spec, init_V, verbose)
+
+        for r in range(1, n_restarts):
+            label = f"[restart {r}] " if verbose else ""
+            if verbose:
+                print(f"  -- Restart {r}/{n_restarts - 1} (best so far P(phi)={best_p:.4f}) --")
+            p_r, V_r, K_r, result_r, hist_r, ph_r = \
+                self._run_one_solve(T, mu0, Sigma0, spec, None, verbose, label=label)
+            history.extend(hist_r)
+            p_history.extend(ph_r)
+            if p_r > best_p:
+                best_p, best_V, best_K, best_result = p_r, V_r, K_r, result_r
 
         return PlanResult(
             mu_trace=best_result.mu_trace.detach(),

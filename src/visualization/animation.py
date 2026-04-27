@@ -108,6 +108,11 @@ def animate_trajectory(result, env, filename="trajectory.gif", dt=0.2,
         return [dot, trail, plan_line, time_text] + history_ellipses
 
     interval_ms = max(50, int(dt * 1000))
+    # Disable interactive mode before creating the animation — prevents
+    # FuncAnimation from registering event callbacks on a stale canvas
+    # (which causes 'NoneType has no attribute add_callback' when plt.show()
+    # has been called earlier in the same session).
+    plt.ioff()
     anim = FuncAnimation(
         fig, update, frames=range(T + 1),
         init_func=init, blit=False, interval=interval_ms,

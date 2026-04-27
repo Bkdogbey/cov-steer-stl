@@ -19,7 +19,7 @@ bounds:
 obstacles:
   - type: rectangle
     x_range: [4.5, 5.5]
-    y_range: [-1.5, 4.0]
+    y_range: [0, 3.0]
   - type: rectangle
     x_range: [1.5, 2.5]
     y_range: [-4.0, -2.0]
@@ -39,18 +39,19 @@ planner:
   type: single_shot   # informational only; run_comparison ignores this
 
 optimizer:
-  max_iters: 500      # more iterations — no replanning to fall back on
+  max_iters: 800
   lr_v: 0.05
   lr_k: 0.005
+  n_restarts: 3       # 3 random seeds — keeps best P(phi) across all runs
 
 weights:
   w_phi: 20.0
-  w_repulsion: 2.0
-  obs_margin: 0.5
+  w_repulsion: 6.0
+  obs_margin: 0.8
   w_trace_terminal: 0.5
-  w_dist: 0.1
-  w_du: 0.1
-  w_K: 0.02           # higher than default: T=80 means K has 640 params
+  w_dist: 0.5         # stronger goal pull to compete with repulsion
+  w_du: 0.2           # low — S-curve path requires vy sign changes
+  w_K: 0.02
 
 # Per-mode overrides applied by run_comparison via _mode_cfg.
 open_loop:

@@ -373,21 +373,79 @@ Same spec, same optimizer, same init — isolates the effect of covariance steer
 
 ## Planner 2: Receding-Horizon MPC
 
-<!-- 🖼 assets/mpc_diagram.png
-     Schematic: timeline [0…T], sliding dashed window of width H,
-     arrow showing "apply step t, advance, re-plan".
-     Draw in draw.io or PowerPoint, export PNG. -->
+:::: {.columns}
+::: {.column width="50%"}
+```
+initialise  μ₀, Σ₀,  V_warm = None
+for t = 0 … T-1:
+    h  ← min(H, T - t)
+    spec_t ← pdSTL spec over window h
 
-![](assets/mpc_diagram.png){width=68% fig-align="center"}
+    # warm-start solve
+    best ← local_solve(h, μ_t, Σ_t,
+                        V_warm, mpc_iters)
 
-At each step $t$: solve a short window of length $H$, apply only the **first control**, re-plan.
+    # random restarts to escape local minima
+    for s = 1 … n_starts - 1:
+        cand ← local_solve(h, μ_t, Σ_t,
+                            None, mpc_iters)
+        if cand.p > best.p: best ← cand
 
-| Feature | Detail |
-|---|---|
-| Warm start | Shift previous $V^*$ forward one step |
-| Random restarts | $n_{\mathrm{starts}}-1$ random inits to escape local minima |
-| Noise rejection | Re-planning adapts to accumulated disturbances |
-| Global score | Full-horizon pdSTL evaluated on assembled trajectory |
+    # apply only first step, advance belief
+    μ_{t+1}, Σ_{t+1} ← step(μ_t, Σ_t,
+                              best.V[0], best.K[0])
+    V_warm ← shift(best.V)   # warm-start next iter
+
+# score assembled trajectory globally
+return P(φ) on full (μ_trace, Σ_trace)
+```
+:::
+::: {.column width="50%"}
+**Key design choices:**
+
+- Window $H \ll T$ — sees obstacles ahead without solving the full problem
+- **Warm start** shifts previous $V^*$ forward by one step; $K$ re-initialised to zero each window
+- **Random restarts** escape local minima where the window plan gets stuck in an obstacle
+- Global $P(\phi)$ evaluated on the **assembled** full trajectory after all $T$ steps — local window scores are guides only
+
+::: {.fragment}
+**vs Single-Shot:**
+
+| | Single-Shot | MPC |
+|---|---|---|
+| Solves | 1 (long) | $T$ (short) |
+| Noise | No correction | Re-plans each step |
+| Cost | Low | $T \times$ higher |
+:::
+:::
+::::
+
+
+---
+
+## Noise Robustness: Where MPC Wins
+
+:::: {.columns}
+::: {.column width="55%"}
+<!-- 🖼 data/results/double_slit_joint_noise_sweep.png
+     Run: main.py block 4 (joint noise sweep, set to "run")
+     X-axis: noise level v (log scale)
+     Y-axis: P(φ)
+     Lines: OL analytic, CL analytic, OL MC, CL MC -->
+![](data/results/double_slit_joint_noise_sweep.png){width=100%}
+:::
+::: {.column width="45%"}
+As process noise $D$ increases:
+
+- Open-loop $P(\phi)$ collapses first — distribution spreads past obstacles
+- Closed-loop (single-shot) degrades more slowly — $K$ actively resists spreading
+- MPC degrades last — re-planning corrects accumulated disturbances
+
+::: {.fragment}
+**Monte Carlo validation** confirms the analytic $P(\phi)$ is a reliable lower bound: empirical satisfaction tracks closely above the analytic curve.
+:::
+:::
+::::
 
 
 ---

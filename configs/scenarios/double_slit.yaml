@@ -19,7 +19,7 @@
 label: "Double Slit"
 dynamics: configs/dynamics/double_integrator.yaml
 
-horizon: 25
+horizon: 35
 animate: true
 
 initial_state:
@@ -40,7 +40,7 @@ obstacles:
     y_range: [2.0, 4.0]      # upper block
   - type: rectangle
     x_range: [0.0, 1.5]
-    y_range: [-1.0, 1.5]     # middle block
+    y_range: [-1.0, 1.5]     # middle block — upper gap 0.5 m (narrow), lower gap 1.0 m (wide)
   - type: rectangle
     x_range: [0.0, 1.5]
     y_range: [-4.0, -2.0]    # lower block
@@ -61,12 +61,12 @@ optimizer:
   lr_k: 0.05
 
 weights:
-  w_phi: 10.0
-  w_trace_terminal: 0.02
+  w_phi: 30.0
+  w_trace_terminal: 0.2
   w_dist: 0.1
-  w_K: 0.005
-  w_du: 0.5
-  w_repulsion: 2.0
+  w_K: 0.05
+  w_du: 0.8
+  w_repulsion: 5.0
   obs_margin: 0.1
 
 # ── Open-loop overrides ──────────────────────────────────────────────
@@ -79,4 +79,4 @@ open_loop:
 
 closed_loop:
   weights:
-    w_repulsion: 2.0
+    w_repulsion: 5.0
