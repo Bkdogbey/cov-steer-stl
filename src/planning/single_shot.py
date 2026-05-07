@@ -5,7 +5,7 @@ from planning.base import BasePlanner, PlanResult
 
 class SingleShotPlanner(BasePlanner):
 
-    def _run_one_solve(self, T, mu0, Sigma0, spec, init_V, verbose, label=""):
+    def _run_one_solve(self, T, mu0, Sigma0, spec, init_V, verbose, label="", iter_callback=None):
         """One full optimization pass. Returns (best_p, best_V, best_K, best_result, history, p_history)."""
         V, K = self._init_params(T, init_V)
         optimizer = self._build_optimizer(V, K)
@@ -34,6 +34,12 @@ class SingleShotPlanner(BasePlanner):
                 K_norm = K.data.norm().item()
                 print(f"  {label}iter {k:4d} | loss={loss:.4f} | P(phi)={p_sat:.4f} | ||K||={K_norm:.3f}")
 
+            if iter_callback is not None:
+                try:
+                    iter_callback(k, p_sat, result.mu_trace.detach(), loss)
+                except TypeError:
+                    iter_callback(k, p_sat, result.mu_trace.detach())
+
             if best_p >= alpha:
                 converged_iters += 1
                 if converged_iters >= patience:
@@ -45,24 +51,25 @@ class SingleShotPlanner(BasePlanner):
 
         return best_p, best_V, best_K, best_result, history, p_history
 
-    def solve(self, mu0, Sigma0, T=None, spec=None, init_V=None, verbose=True):
+    def solve(self, mu0, Sigma0, T=None, spec=None, init_V=None, verbose=True, iter_callback=None):
         T = T or self.cfg["horizon"]
         spec = spec or self.env.get_specification(T)
-        n_restarts = self.opt_cfg.get("n_restarts", 1)
+        n_starts = self.opt_cfg.get("n_starts", 1)
 
+        # First solve uses init_V (warm-start or None); subsequent restarts are random.
         best_p, best_V, best_K, best_result, history, p_history = \
-            self._run_one_solve(T, mu0, Sigma0, spec, init_V, verbose)
+            self._run_one_solve(T, mu0, Sigma0, spec, init_V, verbose,
+                                label=f"[1/{n_starts}] " if n_starts > 1 else "",
+                                iter_callback=iter_callback)
 
-        for r in range(1, n_restarts):
-            label = f"[restart {r}] " if verbose else ""
-            if verbose:
-                print(f"  -- Restart {r}/{n_restarts - 1} (best so far P(phi)={best_p:.4f}) --")
-            p_r, V_r, K_r, result_r, hist_r, ph_r = \
-                self._run_one_solve(T, mu0, Sigma0, spec, None, verbose, label=label)
-            history.extend(hist_r)
-            p_history.extend(ph_r)
-            if p_r > best_p:
-                best_p, best_V, best_K, best_result = p_r, V_r, K_r, result_r
+        for s in range(1, n_starts):
+            p_s, V_s, K_s, res_s, hist_s, ph_s = self._run_one_solve(
+                T, mu0, Sigma0, spec, None, verbose,
+                label=f"[{s+1}/{n_starts}] ")
+            history.extend(hist_s)
+            p_history.extend(ph_s)
+            if p_s > best_p:
+                best_p, best_V, best_K, best_result = p_s, V_s, K_s, res_s
 
         return PlanResult(
             mu_trace=best_result.mu_trace.detach(),

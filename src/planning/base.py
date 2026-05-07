@@ -43,20 +43,9 @@ class BasePlanner:
     # ── Parameter initialization ─────────────────────────────────────
 
     def _init_params(self, T, init_V=None):
-        """Create (V, K) as nn.Parameters.
-
-        Args:
-            T: horizon length
-            init_V: optional warm-start for V [T, nu]
-
-        Returns:
-            V, K as nn.Parameters
-        """
+        """Create (V, K) as nn.Parameters."""
         if init_V is not None:
-            # Invert tanh for warm-start
-            u_norm = torch.clamp(init_V / (self.dyn.u_max + 1e-6), -0.99, 0.99)
-            v_init = 0.5 * torch.log((1 + u_norm) / (1 - u_norm))
-            V = nn.Parameter(v_init.to(self.device))
+            V = nn.Parameter(init_V.clone().to(self.device))
         else:
             V = nn.Parameter(torch.randn(T, self.dyn.nu, device=self.device) * 0.1)
 
@@ -98,6 +87,7 @@ class BasePlanner:
 
         J = compute_loss(p_sat, V, K, result.mu_trace, result.Sigma_trace, self.env, self.dyn, self.weights)
         J.backward()
+        torch.nn.utils.clip_grad_norm_([V, K], max_norm=10.0)
         optimizer.step()
 
         return p_sat.item(), J.item(), result

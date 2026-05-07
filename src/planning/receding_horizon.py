@@ -15,29 +15,41 @@ from planning.base import BasePlanner, PlanResult
 
 class RecedingHorizonPlanner(BasePlanner):
 
-    def _solve_one_step(self, h, mu_cur, Sigma_cur, spec_t, warm_V, mpc_iters):
+    def _solve_one_step(self, h, mu_cur, Sigma_cur, spec_t, warm_V, mpc_iters, iter_callback=None):
         """Run one MPC local solve; return (best_p, best_V, best_K, history)."""
         warm = warm_V[:h] if warm_V is not None else None
         V, K = self._init_params(h, warm)
         optimizer = self._build_optimizer(V, K)
+
+        alpha = self.cfg.get("alpha", 0.95)
+        patience = self.opt_cfg.get("converge_patience", 20)
+        converged_iters = 0
 
         best_p = -1.0
         best_V = V.data.clone()
         best_K = K.data.clone()
         hist = []
 
-        for _ in range(mpc_iters):
-            p_sat, loss, _ = self._optimize_step(V, K, mu_cur, Sigma_cur, spec_t, optimizer)
+        for i in range(mpc_iters):
+            p_sat, loss, result = self._optimize_step(V, K, mu_cur, Sigma_cur, spec_t, optimizer)
             hist.append(loss)
             if p_sat > best_p:
                 best_p = p_sat
                 best_V = V.data.clone()
                 best_K = K.data.clone()
+            if iter_callback is not None:
+                iter_callback(i, p_sat, result.mu_trace.detach())
+            if best_p >= alpha:
+                converged_iters += 1
+                if converged_iters >= patience:
+                    break
+            else:
+                converged_iters = 0
 
         return best_p, best_V, best_K, hist
 
     def solve(self, mu0, Sigma0, T=None, spec=None, init_V=None, verbose=True,
-              step_callback=None):
+              step_callback=None, iter_callback=None):
         T = T or self.cfg["horizon"]
         mpc_cfg = self.cfg.get("mpc", {})
         H = mpc_cfg.get("horizon", min(10, T))
@@ -62,8 +74,15 @@ class RecedingHorizonPlanner(BasePlanner):
             Sigma_cur = Sigma_list[-1]
 
             # Warm-start candidate
+            step_iter_cb = None
+            if iter_callback is not None:
+                def _step_iter_cb(i, p_sat, mu_trace, _t=t):
+                    iter_callback(_t, i, p_sat, mu_trace)
+                step_iter_cb = _step_iter_cb
+
             best_p_t, best_V_t, best_K_t, hist = self._solve_one_step(
-                h, mu_cur, Sigma_cur, spec_t, V_warm, mpc_iters)
+                h, mu_cur, Sigma_cur, spec_t, V_warm, mpc_iters,
+                iter_callback=step_iter_cb)
             history.extend(hist)
             p_history.append(best_p_t)
 

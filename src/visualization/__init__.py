@@ -1,6 +1,6 @@
 from visualization.trajectory import plot_trajectory, draw_env, cov_ellipse_params, plot_control_sequence
 from visualization.convergence import plot_convergence
-from visualization.comparison import plot_comparison
+from visualization.comparison import plot_comparison, plot_covariance_trace
 from visualization.animation import animate_trajectory
 from visualization.monte_carlo import plot_mc_verification
 from visualization.sweep import plot_covariance_sweep, plot_joint_noise_sweep

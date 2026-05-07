@@ -64,11 +64,27 @@ def compute_loss(p_sat, V, K, mu_trace, Sigma_trace, env, dyn, weights):
     loss_K = torch.sum(K ** 2)
 
     loss_repulsion = torch.tensor(0.0, device=device)
-    obs_margin = float(w.get("obs_margin", 0.5))
-    for obs in env.obstacles:
-        loss_repulsion += _rect_repulsion(mu_trace[0], obs, obs_margin, device)
-    for obs in env.circle_obstacles:
-        loss_repulsion += _circle_repulsion(mu_trace[0], obs, obs_margin, device)
+    base_margin = float(w.get("obs_margin", 0.5))
+    cov_scale   = float(w.get("cov_margin_scale", 0.0))
+
+    if cov_scale > 0.0:
+        # Per-timestep margin: base + cov_scale * max std-dev in x/y at that step.
+        # Larger covariance -> larger clearance required, keeping the mean further
+        # from obstacles when the state is most uncertain.
+        varxy     = torch.diagonal(Sigma_trace[0, :, :2, :2], dim1=-2, dim2=-1)  # [T+1, 2]
+        sigma_max = varxy.amax(dim=-1).clamp(min=0.0).sqrt()                      # [T+1]
+        for t in range(mu_trace.shape[1]):
+            margin_t = base_margin + cov_scale * sigma_max[t]
+            pt = mu_trace[0, t:t+1]
+            for obs in env.obstacles:
+                loss_repulsion += _rect_repulsion(pt, obs, margin_t, device)
+            for obs in env.circle_obstacles:
+                loss_repulsion += _circle_repulsion(pt, obs, margin_t, device)
+    else:
+        for obs in env.obstacles:
+            loss_repulsion += _rect_repulsion(mu_trace[0], obs, base_margin, device)
+        for obs in env.circle_obstacles:
+            loss_repulsion += _circle_repulsion(mu_trace[0], obs, base_margin, device)
 
     return (
         float(w.get("w_phi",             1.0)) * loss_phi

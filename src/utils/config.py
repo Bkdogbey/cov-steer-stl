@@ -36,15 +36,6 @@ def resolve_device(device_str: str) -> str:
     return device_str
 
 
-def get_device() -> torch.device:
-    """Return the auto-selected torch.device.
-
-    Prefer reading device from cfg["device"] (set by load_scenario) in new
-    code. This function is kept for backward compatibility.
-    """
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 def load_config(path) -> dict:
     """Load a YAML file. Relative paths resolve from project root."""
     p = Path(path)
