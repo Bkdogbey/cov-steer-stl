@@ -15,7 +15,10 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from utils import skip_run
-from experiments import run_comparison, run_mpc_scenario, run_double_slit_live
+from experiments import (
+    run_comparison, run_mpc_scenario, run_double_slit_live,
+    run_lane_change_normal, run_lane_change_aggressive,
+)
 
 
 # ── 1. Double Slit — live iteration visualisation ────────────────────
@@ -38,5 +41,13 @@ with skip_run("skip", "Obstacle Field — MPC") as check, check():
 
 
 # ── 4. Lane Merge — single-shot OL vs CL comparison ─────────────────
-with skip_run("run", "Lane Merge — Single-Shot Comparison") as check, check():
+with skip_run("skip", "Lane Merge — Single-Shot Comparison") as check, check():
     run_comparison("configs/scenarios/lane_merge.yaml", mc_samples=500)
+
+
+# ── 5. Lane Change — MPC with covariance steering (pdstl-style) ──────
+with skip_run("run", "Lane Change — Normal") as check, check():
+    run_lane_change_normal()
+
+with skip_run("skip", "Lane Change — Aggressive") as check, check():
+    run_lane_change_aggressive()

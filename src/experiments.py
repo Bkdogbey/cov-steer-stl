@@ -16,6 +16,8 @@ from utils import load_scenario
 from dynamics import get_dynamics
 from steering import get_steerer
 from planning import get_planner, build_environment
+from planning.environment import Environment
+from planning.base import PlanResult
 from planning.single_shot import SingleShotPlanner
 from visualization import (
     plot_comparison,
@@ -141,7 +143,8 @@ def setup_scenario(scenario_path):
     dynamics = get_dynamics(dyn_cfg, device)
     steering_mode = cfg.get("planner", {}).get("steering", "closed_loop")
     steerer = get_steerer(steering_mode, dynamics)
-    env = build_environment(cfg, device)
+    T = cfg["horizon"]
+    env = build_environment(cfg, device, T=T, dt=dyn_cfg.get("dt", 0.2))
 
     init = cfg["initial_state"]
     mu0 = torch.tensor(init["mean"], dtype=torch.float32, device=device)
@@ -270,8 +273,8 @@ def run_comparison(scenario_path, mc_samples=0):
     dt = dyn_cfg.get("dt", 0.2)
 
     dynamics = get_dynamics(dyn_cfg, device)
-    env = build_environment(cfg, device)
     T = cfg["horizon"]
+    env = build_environment(cfg, device, T=T, dt=dt)
 
     init = cfg["initial_state"]
     mu0 = torch.tensor(init["mean"], dtype=torch.float32, device=device)
@@ -457,7 +460,7 @@ def run_double_slit_live(scenario_path, verbose=True):
     label = cfg.get("label", "double_slit").lower().replace(" ", "_")
 
     dynamics = get_dynamics(dyn_cfg, device)
-    env = build_environment(cfg, device)
+    env = build_environment(cfg, device, T=T, dt=dt)
 
     init = cfg["initial_state"]
     mu0 = torch.tensor(init["mean"], dtype=torch.float32, device=device)
@@ -733,7 +736,7 @@ def _sweep_one_point(dyn_cfg, cfg, mu0, Sigma0, T, device, max_iters, mc_samples
     from monte_carlo import mc_verify
 
     dynamics = get_dynamics(dyn_cfg, device)
-    env = build_environment(cfg, device)
+    env = build_environment(cfg, device, T=T, dt=dyn_cfg.get("dt", 0.2))
 
     cfg_ol = _mode_cfg(cfg, "open_loop")
     cfg_ol["optimizer"] = {**cfg_ol["optimizer"], "max_iters": max_iters}
@@ -761,3 +764,398 @@ def _sweep_one_point(dyn_cfg, cfg, mu0, Sigma0, T, device, max_iters, mc_samples
         row["p_cl_mc"] = mc_cl["p_empirical"]
 
     return row
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Lane Change (pdstl-style MPC with covariance steering)
+# ═══════════════════════════════════════════════════════════════════════
+
+def _stack_traces(mean_list, cov_list, u_list):
+    """Stack trajectory lists into [1, T, D] / [1, T, D, D] tensors."""
+    return (
+        torch.stack(mean_list).unsqueeze(0),
+        torch.stack(cov_list).unsqueeze(0),
+        torch.stack(u_list).unsqueeze(0),
+    )
+
+
+def _step_with_noise(dynamics, mean, cov, u):
+    """Step belief forward one timestep and inject process noise sample."""
+    next_mean, next_cov = dynamics.step(mean, cov, u)
+    noise = torch.distributions.MultivariateNormal(
+        torch.zeros(dynamics.nx, device=dynamics.device), dynamics.DDT
+    ).sample()
+    return next_mean + noise, next_cov
+
+
+def _step_with_noise_cl(dynamics, mean, cov, V0, K0):
+    """Closed-loop belief step: applies K to covariance (same as ClosedLoopSteerer).
+
+    Control law:  u = sat(V0)
+    Cov update:   A_cl = A + B @ K_eff,  K_eff = K0 * sech²(V0) * u_max
+                  Σ_next = A_cl Σ A_cl^T + DDT
+    """
+    u_ff = dynamics.bound_control(V0)
+    next_mean = dynamics.A @ mean + dynamics.B @ u_ff
+    noise = torch.distributions.MultivariateNormal(
+        torch.zeros(dynamics.nx, device=dynamics.device), dynamics.DDT
+    ).sample()
+    next_mean = next_mean + noise
+
+    gain_scale = dynamics.u_max * (1.0 - torch.tanh(V0) ** 2)  # sech²(V0) * u_max
+    K_eff = K0 * gain_scale.unsqueeze(-1)                        # [nu, nx]
+    A_cl  = dynamics.A + dynamics.B @ K_eff                      # [nx, nx]
+    next_cov = A_cl @ cov @ A_cl.T + dynamics.DDT
+    return next_mean, next_cov
+
+
+def _plot_lc_final(mu_np, S_np, env_global, road, xlim, dt, label,
+                   K_trace=None, p_sat_trace=None, save_path=None):
+    """Static final plot in animation style: wide road view, no aspect constraint."""
+    import matplotlib.patches as mp
+    from visualization.trajectory import cov_ellipse_params
+
+    has_K = K_trace is not None and len(K_trace) > 0
+    fig, axes = plt.subplots(1 + int(has_K), 1,
+                             figsize=(13, 7 if has_K else 5),
+                             gridspec_kw={"height_ratios": [3, 1]} if has_K else None)
+    ax = axes[0] if has_K else axes
+
+    # Road backdrop
+    ax.axhspan(road["y_min"], road["y_max"], color="#F2F2F7", zorder=0)
+    ax.axhspan(road["lane_divider"], road["y_max"], color="#98df8a", alpha=0.18,
+               zorder=1, label="Goal Lane")
+    ax.axhline(road["lane_divider"], color="#7f7f7f", ls="--", lw=1.5, alpha=0.9, zorder=2)
+    ax.axhline(road["y_min"],        color="#7f7f7f", ls="-",  lw=2.0, alpha=0.9, zorder=2)
+    ax.axhline(road["y_max"],        color="#7f7f7f", ls="-",  lw=2.0, alpha=0.9, zorder=2)
+
+    # Moving obstacle: dashed path + 5 snapshot rectangles
+    obs = env_global.moving_obstacles[0]
+    xt = obs["x_traj"].cpu().numpy() if isinstance(obs["x_traj"], torch.Tensor) else np.asarray(obs["x_traj"])
+    yt = obs["y_traj"].cpu().numpy() if isinstance(obs["y_traj"], torch.Tensor) else np.asarray(obs["y_traj"])
+    ax.plot(xt, yt, "--", color="#d62728", alpha=0.35, lw=1.0, zorder=3, label="Obstacle path")
+    snap = max(1, len(xt) // 5)
+    w_o, h_o = obs["width"], obs["height"]
+    for k in range(0, len(xt), snap):
+        ax.add_patch(mp.Rectangle(
+            (xt[k] - w_o / 2, yt[k] - h_o / 2), w_o, h_o,
+            fc="#ff9896", ec="#d62728", alpha=0.30, lw=1.0, zorder=4,
+        ))
+
+    # Ghost full-path line
+    ax.plot(mu_np[:, 0], mu_np[:, 1], "b-", lw=2.0, alpha=0.9, zorder=5, label="Ego trajectory")
+
+    # Covariance ellipses every ~5% of steps
+    T = mu_np.shape[0] - 1
+    step = max(1, T // 20)
+    for t in range(0, T + 1, step):
+        theta, w_e, h_e = cov_ellipse_params(S_np[t, :2, :2], k=2.0)
+        ax.add_patch(mp.Ellipse(
+            (mu_np[t, 0], mu_np[t, 1]), w_e, h_e, angle=theta,
+            fc="#1f77b4", ec="#1f77b4", alpha=0.22, zorder=6,
+        ))
+
+    # Start marker
+    ax.plot(mu_np[0, 0], mu_np[0, 1], "ko", ms=8, zorder=8, label="Start")
+
+    ax.set_xlim(xlim[0], xlim[1])
+    ax.set_ylim(road["y_min"] - 0.3, road["y_max"] + 0.3)
+    ax.set_xlabel("x [m]", fontsize=12, fontweight="bold")
+    ax.set_ylabel("y [m]", fontsize=12, fontweight="bold")
+    ax.set_title(f"Lane Change: {label}  |  T={T} steps  |  dt={dt}s", fontsize=13)
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
+
+    if has_K:
+        import numpy as np_inner
+        K_arr = np_inner.stack(K_trace)           # [T_mpc, nu, nx]
+        K_frob = np_inner.linalg.norm(K_arr, axis=(1, 2))   # Frobenius norm per step
+        # lateral gains: K[u_y, p_y] = K[:, 1, 1] and K[u_y, v_y] = K[:, 1, 3]
+        K_py = K_arr[:, 1, 1]   # lateral control ← lateral position error
+        K_vy = K_arr[:, 1, 3]   # lateral control ← lateral velocity error
+
+        steps = np_inner.arange(len(K_trace))
+        ax_k = axes[1]
+        ax_k.plot(steps, K_frob, "k-",  lw=1.8, label=r"$\|K_t\|_F$")
+        ax_k.plot(steps, K_py,   "--",  color="#1f77b4", lw=1.4, label=r"$K_{u_y, p_y}$")
+        ax_k.plot(steps, K_vy,   ":",   color="#ff7f0e", lw=1.4, label=r"$K_{u_y, v_y}$")
+        ax_k.axhline(0, color="#aaaaaa", lw=0.8)
+        ax_k.set_xlim(0, len(K_trace))
+        ax_k.set_xlabel("MPC step", fontsize=11)
+        ax_k.set_ylabel("Gain", fontsize=11)
+        ax_k.set_title("Feedback gains  $K_t[0]$", fontsize=11)
+        ax_k.legend(loc="upper right", fontsize=9, framealpha=0.85)
+        ax_k.grid(True, alpha=0.25)
+
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  Saved → {save_path}")
+    plt.show()
+    plt.close(fig)
+
+
+def _setup_lc_live_plot(road, obs_cfg, obs_x0, obs_y0, success_cfg, label, xlim):
+    """Build the lane-change live figure (mirrors pdstl setup_lane_change_live_plot)."""
+    import matplotlib.patches as mp
+
+    plt.ion()
+    fig, ax = plt.subplots(figsize=(13, 5))
+
+    # road backdrop
+    ax.axhspan(road["y_min"], road["y_max"], color="#F2F2F7", zorder=0)
+    # goal lane shade
+    ax.axhspan(2.0, road["y_max"], color="#98df8a", alpha=0.18, zorder=1, label="Goal Lane")
+    # success region shade
+    ax.axhspan(success_cfg["y_min"], success_cfg["y_max"],
+               color="#2ca02c", alpha=0.10, zorder=1, label="Success Zone")
+    # lane markings
+    ax.axhline(road["lane_divider"], color="#7f7f7f", ls="--", lw=1.5, alpha=0.9, zorder=2)
+    ax.axhline(road["y_min"], color="#7f7f7f", ls="-",  lw=2.0, alpha=0.9, zorder=2)
+    ax.axhline(road["y_max"], color="#7f7f7f", ls="-",  lw=2.0, alpha=0.9, zorder=2)
+
+    ax.set_xlim(xlim[0], xlim[1])
+    ax.set_ylim(road["y_min"] - 0.5, road["y_max"] + 0.5)
+    ax.set_aspect("equal")
+    ax.set_xlabel("x [m]", fontsize=12)
+    ax.set_ylabel("y [m]", fontsize=12)
+    ax.set_title(f"Lane Change: {label}", fontsize=13)
+    ax.grid(True, alpha=0.25)
+
+    w, h = obs_cfg["width"], obs_cfg["height"]
+    obs_rect = mp.Rectangle(
+        (obs_x0 - w / 2, obs_y0 - h / 2), w, h,
+        fc="#ff9896", ec="#d62728", lw=1.5, alpha=0.8, zorder=5,
+    )
+    ax.add_patch(obs_rect)
+
+    ego_dot,  = ax.plot([], [], "o", color="#1f77b4", ms=8, zorder=10)
+    ego_trail, = ax.plot([], [], "-", color="#1f77b4", lw=1.5, alpha=0.7, zorder=9)
+    plan_line, = ax.plot([], [], "--", color="#ff7f0e", lw=1.8, alpha=0.85, zorder=8)
+
+    ego_cov_patch = mp.Ellipse(
+        (0, 0), 0.1, 0.1, angle=0,
+        fc="#1f77b4", ec="#1f77b4", alpha=0.30, zorder=7,
+    )
+    ax.add_patch(ego_cov_patch)
+
+    ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
+
+    return fig, ax, ego_dot, ego_trail, plan_line, ego_cov_patch, obs_rect
+
+
+def run_lane_change(scenario_path):
+    """Lane change MPC with covariance steering — exact pdstl scenario structure."""
+    from visualization.trajectory import cov_ellipse_params, plot_trajectory
+
+    cfg, dyn_cfg = load_scenario(scenario_path)
+    device = torch.device(cfg["device"])
+    dt = dyn_cfg.get("dt", 0.2)
+    dynamics = get_dynamics(dyn_cfg, device)
+
+    H = cfg["H"]
+    T_SIM = cfg["T_SIM"]
+    road = cfg["road"]
+    obs_cfg = cfg["obstacle"]
+    success_cfg = cfg["success"]
+    label = cfg.get("label", "lane_change")
+
+    save_dir = Path(cfg.get("save_dir", "data/results"))
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Global obstacle trajectory ──────────────────────────────────────
+    total_pts = T_SIM + H + 10
+    times_np = np.arange(total_pts) * dt
+    obs_x_global = obs_cfg["x0"] + obs_cfg["speed"] * times_np
+    obs_y_global = np.ones_like(times_np) * obs_cfg["y"]
+
+    # ── Global env (road markings + full obs traj — for final viz only) ─
+    marking_x = road["marking_x_range"]
+    env_global = Environment(device=device)
+    env_global.add_lane_marking(marking_x, road["lane_divider"], style="dashed")
+    env_global.add_lane_marking(marking_x, road["y_min"], style="solid")
+    env_global.add_lane_marking(marking_x, road["y_max"], style="solid")
+    env_global.set_goal(**cfg["goal"])
+    env_global.set_bounds(
+        x_range=[road["marking_x_range"][0], road["marking_x_range"][1]],
+        y_range=[road["y_min"], road["y_max"]],
+    )
+    env_global.add_moving_obstacle(
+        x_traj=obs_x_global[: T_SIM + 1],
+        y_traj=obs_y_global[: T_SIM + 1],
+        width=obs_cfg["width"],
+        height=obs_cfg["height"],
+    )
+
+    # ── Initial belief ──────────────────────────────────────────────────
+    mu0 = torch.tensor(cfg["x0_mean"], dtype=torch.float32, device=device)
+    Sigma0 = torch.eye(len(cfg["x0_mean"]), device=device) * cfg["x0_cov_scale"]
+    curr_mean, curr_cov = mu0.clone(), Sigma0.clone()
+
+    real_mean_trace = [curr_mean]
+    real_cov_trace = [curr_cov]
+    real_u_trace = []
+    p_sat_trace = []
+    K_trace = []       # K[0] at each MPC step  [nu, nx]
+    all_plans = []
+    prev_V = None
+    success_counter = 0
+
+    # ── MPC local-window params ─────────────────────────────────────────
+    goal_lookahead   = cfg.get("mpc_goal_lookahead", 4.0)
+    goal_window_width = cfg.get("mpc_goal_window_width", 60.0)
+    lane_margin      = cfg.get("lane_boundary_margin", 0.5)
+    goal_y_inset     = cfg.get("goal_y_inset", 0.1)
+
+    # ── Live plot ───────────────────────────────────────────────────────
+    xlim = cfg.get("plot_xlim", [-3, 35])
+    fig, ax, ego_dot, ego_trail, plan_line, ego_cov_patch, obs_rect = \
+        _setup_lc_live_plot(road, obs_cfg, obs_x_global[0], obs_y_global[0],
+                            success_cfg, label, xlim)
+
+    # ── MPC loop ────────────────────────────────────────────────────────
+    for t in range(T_SIM):
+        ego_pos = curr_mean.cpu().numpy()
+        curr_x = float(ego_pos[0])
+
+        # local environment
+        env_local = Environment(device=device)
+        goal_x_lo = curr_x + goal_lookahead
+        goal_x_hi = curr_x + goal_lookahead + goal_window_width
+        env_local.set_goal(
+            x_range=[goal_x_lo, goal_x_hi],
+            y_range=[cfg["goal"]["y_range"][0] + goal_y_inset,
+                     cfg["goal"]["y_range"][1] - goal_y_inset],
+        )
+
+        y_min_bound = road["y_min"] + lane_margin
+        if curr_mean[1].item() > road["lane_divider"] - lane_margin:
+            y_min_bound = road["lane_divider"]
+        env_local.set_bounds(
+            x_range=[-100.0, 200.0],
+            y_range=[y_min_bound, road["y_max"]],
+        )
+
+        idx_end = t + H + 1
+        if idx_end <= len(obs_x_global):
+            sl_x = obs_x_global[t:idx_end]
+            sl_y = obs_y_global[t:idx_end]
+        else:
+            pad = idx_end - len(obs_x_global)
+            sl_x = np.concatenate([obs_x_global[t:], np.full(pad, obs_x_global[-1])])
+            sl_y = np.concatenate([obs_y_global[t:], np.full(pad, obs_y_global[-1])])
+        env_local.add_moving_obstacle(
+            x_traj=sl_x, y_traj=sl_y,
+            width=obs_cfg["width"], height=obs_cfg["height"],
+        )
+
+        # warm start
+        init_V = None
+        if prev_V is not None:
+            init_V = torch.cat([prev_V[1:], prev_V[-1:]], dim=0)
+
+        # covariance steering solve
+        steerer = get_steerer("closed_loop", dynamics)
+        planner = SingleShotPlanner(dynamics, steerer, env_local, cfg)
+        result = planner.solve(curr_mean, curr_cov, T=H, verbose=False, init_V=init_V)
+
+        prev_V = result.V.detach()
+        all_plans.append(result.mu_trace)
+        p_sat_trace.append(result.best_p)
+        K_trace.append(result.K[0].detach().cpu().numpy())   # [nu, nx]
+
+        # apply first control and step (closed-loop covariance steering)
+        curr_mean, curr_cov = _step_with_noise_cl(
+            dynamics, curr_mean, curr_cov,
+            result.V[0].detach(), result.K[0].detach()
+        )
+        u_curr = dynamics.bound_control(result.V[0].detach())
+
+        real_mean_trace.append(curr_mean)
+        real_cov_trace.append(curr_cov)
+        real_u_trace.append(u_curr)
+
+        # live plot update (use post-step position for dot + ellipse)
+        ex, ey = curr_mean[0].item(), curr_mean[1].item()
+        ego_dot.set_data([ex], [ey])
+        ego_trail.set_data(
+            [m[0].item() for m in real_mean_trace],
+            [m[1].item() for m in real_mean_trace],
+        )
+        plan_np = result.mu_trace.detach().cpu().squeeze(0).numpy()
+        plan_line.set_data(plan_np[:, 0], plan_np[:, 1])
+
+        theta, w_e, h_e = cov_ellipse_params(curr_cov[:2, :2].cpu().numpy())
+        ego_cov_patch.set_center((ex, ey))
+        ego_cov_patch.set_width(w_e)
+        ego_cov_patch.set_height(h_e)
+        ego_cov_patch.set_angle(theta)
+
+        obs_rect.set_xy((obs_x_global[t] - obs_cfg["width"] / 2,
+                         obs_y_global[t] - obs_cfg["height"] / 2))
+
+        if plt.get_backend().lower() != "agg":
+            plt.draw()
+            plt.pause(cfg.get("live_plot_pause", 0.001))
+
+        if t % 5 == 0:
+            print(f"  step {t:3d} | ego=({ex:.2f}, {ey:.2f}) | P={result.best_p:.3f} | "
+                  f"tr(Σ)={float(torch.trace(curr_cov[:2,:2]).item()):.4f}")
+
+        # success check
+        if success_cfg["y_min"] <= ey <= success_cfg["y_max"]:
+            success_counter += 1
+        else:
+            success_counter = 0
+        if success_counter >= success_cfg["consecutive_steps"]:
+            print(f"  Lane change complete at step {t} ({label})")
+            break
+
+    plt.ioff()
+    plt.close(fig)
+
+    # ── Stack traces ────────────────────────────────────────────────────
+    full_mean, full_cov, full_u = _stack_traces(
+        real_mean_trace, real_cov_trace, real_u_trace
+    )
+    actual_steps = len(real_mean_trace)
+    env_global.moving_obstacles[0]["x_traj"] = \
+        torch.as_tensor(obs_x_global[:actual_steps], dtype=torch.float32)
+    env_global.moving_obstacles[0]["y_traj"] = \
+        torch.as_tensor(obs_y_global[:actual_steps], dtype=torch.float32)
+
+    # ── Final static plot (animation style) ────────────────────────────
+    mu_np = full_mean.detach().cpu().squeeze().numpy()
+    S_np  = full_cov.detach().cpu().squeeze().numpy()
+    T_actual = mu_np.shape[0] - 1
+    stem = label.lower().replace(" ", "_")
+    _plot_lc_final(
+        mu_np, S_np, env_global, road, xlim, dt, label,
+        K_trace=K_trace, p_sat_trace=p_sat_trace,
+        save_path=save_dir / f"lane_change_{stem}_trajectory.png",
+    )
+
+    if cfg.get("animate", False):
+        anim_cfg = cfg.get("animation", {})
+        gif_path = save_dir / anim_cfg.get("filename", f"lane_change_{stem}.gif")
+        print(f"  Saving animation → {gif_path}")
+        animate_trajectory(
+            PlanResult(
+                mu_trace=full_mean, Sigma_trace=full_cov,
+                V=real_u_trace[0].unsqueeze(0) if real_u_trace else torch.zeros(1, dynamics.nu),
+                K=torch.zeros(1, dynamics.nu, dynamics.nx),
+                best_p=p_sat_trace[-1] if p_sat_trace else 0.0,
+            ),
+            env_global, filename=str(gif_path),
+            dt=dt, plan_traces=all_plans,
+        )
+
+    return full_mean, full_cov, full_u, p_sat_trace
+
+
+def run_lane_change_normal():
+    run_lane_change("configs/scenarios/lane_change.yaml")
+
+
+def run_lane_change_aggressive():
+    run_lane_change("configs/scenarios/lane_change_aggressive.yaml")

@@ -110,7 +110,7 @@ class Environment:
 # Config → Environment builder
 # ═════════════════════════════════════════════════════════════════════
 
-def build_environment(cfg, device="cpu"):
+def build_environment(cfg, device="cpu", T=None, dt=0.2):
     """Construct an Environment from a scenario config dict."""
     env = Environment(device=device)
     if "goal" in cfg:
@@ -123,6 +123,21 @@ def build_environment(cfg, device="cpu"):
         kind = obs.get("type", "rectangle")
         if kind == "circle":
             env.add_circle_obstacle(center=obs["center"], radius=obs["radius"])
+        elif kind == "moving_rectangle":
+            if T is None:
+                raise ValueError(
+                    "T must be passed to build_environment for moving_rectangle obstacles"
+                )
+            n = T + 1
+            times = torch.arange(n, dtype=torch.float32) * dt
+            x_traj = obs["x0"] + obs["speed_x"] * times
+            y_traj = torch.full((n,), obs["y"], dtype=torch.float32)
+            env.add_moving_obstacle(
+                x_traj=x_traj,
+                y_traj=y_traj,
+                width=obs["width"],
+                height=obs["height"],
+            )
         else:
             env.add_obstacle(x_range=obs["x_range"], y_range=obs["y_range"])
     for lm in cfg.get("lane_markings", []):

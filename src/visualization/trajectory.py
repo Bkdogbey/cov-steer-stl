@@ -1,6 +1,7 @@
 """Static trajectory plots with covariance ellipses."""
 
 import numpy as np
+import torch
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
@@ -66,6 +67,18 @@ def draw_env(ax, env):
             (vx[0], vy[0]), vx[1] - vx[0], vy[1] - vy[0],
             fc="#c5b0d5", ec="#9467bd", alpha=0.4, lw=1.5,
         ))
+
+    for obs in env.moving_obstacles:
+        xt = obs["x_traj"].cpu().numpy() if isinstance(obs["x_traj"], torch.Tensor) else np.asarray(obs["x_traj"])
+        yt = obs["y_traj"].cpu().numpy() if isinstance(obs["y_traj"], torch.Tensor) else np.asarray(obs["y_traj"])
+        ax.plot(xt, yt, "--", color="#d62728", alpha=0.3, lw=1.0)
+        snap = max(1, len(xt) // 5)
+        w, h = obs["width"], obs["height"]
+        for k in range(0, len(xt), snap):
+            ax.add_patch(patches.Rectangle(
+                (xt[k] - w / 2, yt[k] - h / 2), w, h,
+                fc="#ff9896", ec="#d62728", alpha=0.25, lw=1.0, zorder=3,
+            ))
 
     for lm in env.lane_markings:
         ls = "--" if lm.get("style", "dashed") == "dashed" else "-"

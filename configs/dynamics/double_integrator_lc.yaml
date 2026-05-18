@@ -1,0 +1,6 @@
+type: double_integrator
+dt: 0.2
+u_max: 2.5
+D_diag: 0.01    # matches pdstl q_std=0.01  (DDT = D_diag² * I)
+nx: 4
+nu: 2

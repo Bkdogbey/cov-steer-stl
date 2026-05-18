@@ -1,0 +1,64 @@
+# Aggressive lane change — obstacle starts close and moves fast,
+# forcing an immediate sharp merge.  Mirrors pdstl lane_change_aggressive.yaml.
+
+label: "Aggressive"
+dynamics: configs/dynamics/double_integrator_lc.yaml
+
+H: 40
+T_SIM: 100
+
+x0_mean: [0.0, 0.0, 3.5, 0.0]
+x0_cov_scale: 0.01
+
+road:
+  y_min: -2.0
+  y_max:  6.0
+  lane_divider: 2.0
+  marking_x_range: [-5, 120]
+
+goal:
+  x_range: [0.0, 200.0]
+  y_range: [2.0, 6.0]
+
+obstacle:
+  x0: 7.0      # starts much closer
+  speed: 0.8   # moves faster — gap closes quickly
+  y: 4.0
+  width: 2.5
+  height: 1.5
+
+success:
+  y_min: 3.0
+  y_max: 5.5
+  consecutive_steps: 15
+
+robot_dims: [2.0, 1.0]
+plot_xlim: [-3, 35]
+live_plot_pause: 0.001
+
+mpc_goal_lookahead: 4.0
+mpc_goal_window_width: 60.0
+lane_boundary_margin: 0.5
+goal_y_inset: 0.1
+
+animation:
+  filename: lane_change_aggressive.gif
+  step: 4
+  title: "Lane Change: Aggressive"
+
+optimizer:
+  max_iters: 200
+  lr_v: 0.05
+  lr_k: 0.005
+  converge_patience: 20
+
+weights:
+  w_phi: 100.0
+  w_trace_terminal: 0.1
+  w_dist: 22.0
+  w_du: 6.0      # high smoothness — gradual arc despite urgency
+  w_K: 0.005
+  w_repulsion: 8.0
+  obs_margin: 0.5
+
+alpha: 0.90
