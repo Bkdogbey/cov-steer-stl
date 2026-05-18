@@ -127,34 +127,11 @@ def plot_joint_noise_sweep(rows, label, save_dir):
     Path(save_dir).mkdir(parents=True, exist_ok=True)
 
     fig, ax = plt.subplots(figsize=(8, 5))
-
-    xs = np.array([r["noise_level"] for r in rows])
-    p_ol_a = np.array([r["p_ol_analytic"] for r in rows])
-    p_cl_a = np.array([r["p_cl_analytic"] for r in rows])
-
-    ax.plot(xs, p_ol_a, color="#1f77b4", lw=2, label="Open-loop analytic")
-    ax.plot(xs, p_cl_a, color="#d62728", lw=2, label="Cov-steering analytic")
-
-    has_mc = rows[0].get("p_ol_mc") is not None
-    if has_mc:
-        p_ol_mc = np.array([r["p_ol_mc"] for r in rows])
-        p_cl_mc = np.array([r["p_cl_mc"] for r in rows])
-        ax.plot(xs, p_ol_mc, color="#1f77b4", lw=1.5, ls="--",
-                marker="o", ms=5, label="Open-loop empirical (MC)")
-        ax.plot(xs, p_cl_mc, color="#d62728", lw=1.5, ls="--",
-                marker="s", ms=5, label="Cov-steering empirical (MC)")
-        ax.fill_between(xs, p_ol_a, p_ol_mc, alpha=0.10, color="#1f77b4")
-        ax.fill_between(xs, p_cl_a, p_cl_mc, alpha=0.10, color="#d62728")
-
-    ax.axhline(0.95, color="gray", lw=1, ls=":", alpha=0.7, label="α = 0.95")
-    ax.set_xscale("log")
-    ax.set_ylim(-0.05, 1.05)
-    ax.set_xlabel("Noise level  v  (σ₀² = D = v)", fontsize=11)
-    ax.set_ylabel("P(φ)", fontsize=11)
-    ax.set_title(f"{label} — Joint Noise Sweep", fontsize=13, fontweight="bold")
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3)
-
+    _draw_sweep_ax(
+        ax, rows, x_key="noise_level",
+        xlabel="Noise level  v  (σ₀² = D = v)",
+        title=f"{label} — Joint Noise Sweep",
+    )
     plt.tight_layout()
 
     stem = label.lower().replace(" ", "_")

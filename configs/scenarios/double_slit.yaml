@@ -11,7 +11,6 @@
 # Expected behaviour:
 #   Open-loop:   covariance grows → uses wider lower gap
 #   Cov-steering: K shrinks σ_y → fits through narrower upper gap
-#s
 # NOTE: 'run_comparison' always runs both open-loop and closed-loop.
 # Use the 'open_loop:' and 'closed_loop:' sections below to tune each
 # independently. 'planner.steering' is only used by 'run_scenario'.
@@ -48,11 +47,6 @@ obstacles:
 planner:
   type: single_shot
   steering: closed_loop
-
-#mpc:
-  #horizon: 15    # look-ahead window; must see past the wall (~10 steps away) to plan gaps
-  #iters: 150     # optimizer iterations per MPC step
-  #n_starts: 3    # random restarts per step — helps escape "stuck-in-obstacle" local minima
 
 # ── Shared base optimizer ────────────────────────────────────────────
 optimizer:

@@ -125,4 +125,10 @@ def build_environment(cfg, device="cpu"):
             env.add_circle_obstacle(center=obs["center"], radius=obs["radius"])
         else:
             env.add_obstacle(x_range=obs["x_range"], y_range=obs["y_range"])
+    for lm in cfg.get("lane_markings", []):
+        env.add_lane_marking(
+            x_range=lm["x_range"],
+            y_pos=lm["y_pos"],
+            style=lm.get("style", "dashed"),
+        )
     return env

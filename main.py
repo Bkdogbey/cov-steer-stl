@@ -28,10 +28,15 @@ with skip_run("skip", "Double Slit — Single-Shot Comparison") as check, check(
 
 
 # ── 2. Narrow Gap — MPC, double integrator ───────────────────────────
-with skip_run("run", "Narrow Gap — MPC") as check, check():
+with skip_run("skip", "Narrow Gap — MPC") as check, check():
     run_mpc_scenario("configs/scenarios/narrow_gap.yaml", mc_samples=1000)
 
 
 # ── 3. Obstacle Field — MPC, single integrator ───────────────────────
 with skip_run("skip", "Obstacle Field — MPC") as check, check():
     run_mpc_scenario("configs/scenarios/obstacle_field.yaml")
+
+
+# ── 4. Lane Merge — single-shot OL vs CL comparison ─────────────────
+with skip_run("run", "Lane Merge — Single-Shot Comparison") as check, check():
+    run_comparison("configs/scenarios/lane_merge.yaml", mc_samples=500)

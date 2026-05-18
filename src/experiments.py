@@ -28,6 +28,47 @@ from visualization import (
 )
 
 
+def _canvas_frame(fig):
+    """Capture a matplotlib figure as an RGB numpy array."""
+    fig.canvas.draw()
+    w, h = fig.canvas.get_width_height()
+    return np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8).reshape(h, w, 4)[:, :, 1:]
+
+
+def _build_params_dict(cfg, dyn_cfg, T):
+    """Build the parameter display dict used in comparison figure captions."""
+    init_cov = cfg.get("initial_state", {}).get("cov_diag", [0, 0])
+    sigma0 = float(np.sqrt(max(init_cov[0], init_cov[1]))) if init_cov else 0.0
+    w   = cfg.get("weights", {})
+    opt = cfg.get("optimizer", {})
+    return {
+        "horizon":     T,
+        "dt":          dyn_cfg.get("dt", 0.2),
+        "D_diag":      dyn_cfg.get("D_diag", "?"),
+        "sigma0":      sigma0,
+        "w_phi":       w.get("w_phi", "?"),
+        "w_repulsion": w.get("w_repulsion", "?"),
+        "max_iters":   opt.get("max_iters", "?"),
+        "lr_v":        opt.get("lr_v", "?"),
+    }
+
+
+def _print_result_summary(result_ol, result_cl):
+    """Print open-loop vs closed-loop P(phi) and covariance summary."""
+    S_end_ol = result_ol.Sigma_trace[0, -1, :2, :2].detach().cpu().numpy()
+    S_end_cl = result_cl.Sigma_trace[0, -1, :2, :2].detach().cpu().numpy()
+    det_ol = np.linalg.det(S_end_ol)
+    det_cl = np.linalg.det(S_end_cl)
+    print("\n  Summary:")
+    print(f"    Open-loop  P(phi) = {result_ol.best_p:.4f},  det(Sigma_end) = {det_ol:.2e}")
+    print(f"               route  = {getattr(result_ol, 'route_label', 'n/a')}")
+    print(f"    Cov-steer  P(phi) = {result_cl.best_p:.4f},  det(Sigma_end) = {det_cl:.2e}")
+    print(f"               route  = {getattr(result_cl, 'route_label', 'n/a')}")
+    if det_cl > 1e-15:
+        print(f"    Covariance reduction: {det_ol / det_cl:.1f}x")
+    print(f"    ||K||_F = {result_cl.K.norm().item():.4f}")
+
+
 def _set_seed(cfg, offset=0):
     """Make a scenario run repeatable when the YAML provides seed."""
     seed = cfg.get("seed")
@@ -247,38 +288,13 @@ def run_comparison(scenario_path, mc_samples=0):
         cfg, "closed_loop", dynamics, env, mu0, Sigma0, T, verbose=True)
 
     # ── Summary ──────────────────────────────────────────────────────
-    S_end_ol = result_ol.Sigma_trace[0, -1, :2, :2].detach().cpu().numpy()
-    S_end_cl = result_cl.Sigma_trace[0, -1, :2, :2].detach().cpu().numpy()
-    det_ol = np.linalg.det(S_end_ol)
-    det_cl = np.linalg.det(S_end_cl)
-    print("\n  Summary:")
-    print(f"    Open-loop  P(phi) = {result_ol.best_p:.4f},  det(Sigma_end) = {det_ol:.2e}")
-    print(f"               route  = {getattr(result_ol, 'route_label', 'n/a')}")
-    print(f"    Cov-steer  P(phi) = {result_cl.best_p:.4f},  det(Sigma_end) = {det_cl:.2e}")
-    print(f"               route  = {getattr(result_cl, 'route_label', 'n/a')}")
-    if det_cl > 1e-15:
-        print(f"    Covariance reduction: {det_ol / det_cl:.1f}x")
-    print(f"    ||K||_F = {result_cl.K.norm().item():.4f}")
+    _print_result_summary(result_ol, result_cl)
 
     # ── Plots ─────────────────────────────────────────────────────────
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     label = cfg.get("label", "comparison").lower().replace(" ", "_")
-
-    init_cov = cfg.get("initial_state", {}).get("cov_diag", [0, 0])
-    sigma0 = float(np.sqrt(max(init_cov[0], init_cov[1]))) if init_cov else 0.0
-    w = cfg.get("weights", {})
-    opt = cfg.get("optimizer", {})
-    params = {
-        "horizon":      T,
-        "dt":           dyn_cfg.get("dt", 0.2),
-        "D_diag":       dyn_cfg.get("D_diag", "?"),
-        "sigma0":       sigma0,
-        "w_phi":        w.get("w_phi", "?"),
-        "w_repulsion":  w.get("w_repulsion", "?"),
-        "max_iters":    opt.get("max_iters", "?"),
-        "lr_v":         opt.get("lr_v", "?"),
-    }
+    params = _build_params_dict(cfg, dyn_cfg, T)
 
     fig = plot_comparison(
         result_ol, result_cl, env, T,
@@ -373,20 +389,7 @@ def _save_double_slit_slide_outputs(result_ol, result_cl, env, cfg, dyn_cfg, T, 
     """Save a compact set of presentation-ready double-slit figures."""
     trace_ol = float(torch.trace(result_ol.Sigma_trace[0, -1, :2, :2]).item())
     trace_cl = float(torch.trace(result_cl.Sigma_trace[0, -1, :2, :2]).item())
-    init_cov = cfg.get("initial_state", {}).get("cov_diag", [0, 0])
-    sigma0 = float(np.sqrt(max(init_cov[0], init_cov[1]))) if init_cov else 0.0
-    w = cfg.get("weights", {})
-    opt = cfg.get("optimizer", {})
-    params = {
-        "horizon": T,
-        "dt": dyn_cfg.get("dt", 0.2),
-        "D_diag": dyn_cfg.get("D_diag", "?"),
-        "sigma0": sigma0,
-        "w_phi": w.get("w_phi", "?"),
-        "w_repulsion": w.get("w_repulsion", "?"),
-        "max_iters": opt.get("max_iters", "?"),
-        "lr_v": opt.get("lr_v", "?"),
-    }
+    params = _build_params_dict(cfg, dyn_cfg, T)
 
     fig = plot_comparison(
         result_ol, result_cl, env, T,
@@ -485,10 +488,7 @@ def run_double_slit_live(scenario_path, verbose=True):
         mode_label=f"Closed-Loop | Route: {selected_route} | Iter 0/{max_iters}")
 
     def _capture():
-        fig_live.canvas.draw()
-        w_px, h_px = fig_live.canvas.get_width_height()
-        arr = np.frombuffer(fig_live.canvas.tostring_argb(), dtype=np.uint8).reshape(h_px, w_px, 4)
-        frames.append(arr[:, :, 1:].copy())  # ARGB -> RGB
+        frames.append(_canvas_frame(fig_live))
 
     def _on_iter(k, p_sat, mu_trace, loss=None):
         if k % update_freq != 0:
@@ -542,13 +542,8 @@ def run_double_slit_live(scenario_path, verbose=True):
         print(f"  {len(frames)} frames saved")
     print(f"  Saved live panel -> {live_panel_path}")
 
-    print("\n  Summary:")
-    print(f"    Open-loop  P(phi) = {result_ol.best_p:.4f}")
-    print(f"               route  = {getattr(result_ol, 'route_label', 'n/a')}")
-    print(f"    Cov-steer  P(phi) = {result_cl.best_p:.4f}")
-    print(f"               route  = {getattr(result_cl, 'route_label', 'n/a')}")
+    _print_result_summary(result_ol, result_cl)
     print(f"    Improvement        = {result_cl.best_p - result_ol.best_p:+.4f}")
-    print(f"    ||K||_F            = {result_cl.K.norm().item():.4f}")
 
     if cfg.get("save_slide_outputs", True):
         _save_double_slit_slide_outputs(
@@ -617,10 +612,7 @@ def run_mpc_scenario(scenario_path, verbose=True, mc_samples=0):
     frames = []
 
     def _capture():
-        fig_live.canvas.draw()
-        w, h_px = fig_live.canvas.get_width_height()
-        arr = np.frombuffer(fig_live.canvas.tostring_argb(), dtype=np.uint8).reshape(h_px, w, 4)
-        frames.append(arr[:, :, 1:].copy())  # ARGB -> RGB
+        frames.append(_canvas_frame(fig_live))
 
     def _on_iter(step_t, i, p_sat, mu_trace):
         if i % iter_update_freq != 0:

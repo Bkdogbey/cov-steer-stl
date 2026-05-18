@@ -67,6 +67,11 @@ def draw_env(ax, env):
             fc="#c5b0d5", ec="#9467bd", alpha=0.4, lw=1.5,
         ))
 
+    for lm in env.lane_markings:
+        ls = "--" if lm.get("style", "dashed") == "dashed" else "-"
+        ax.plot(lm["x"], [lm["y"], lm["y"]],
+                linestyle=ls, color="#555555", linewidth=1.5, alpha=0.7, zorder=6)
+
 
 def plot_trajectory(ax, mu_np, Sigma_np, env, T, title=None, ellipse_step=2, k=2.0,
                     annotate_covariance=True):

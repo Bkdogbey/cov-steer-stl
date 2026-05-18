@@ -35,10 +35,7 @@ class SingleShotPlanner(BasePlanner):
                 print(f"  {label}iter {k:4d} | loss={loss:.4f} | P(phi)={p_sat:.4f} | ||K||={K_norm:.3f}")
 
             if iter_callback is not None:
-                try:
-                    iter_callback(k, p_sat, result.mu_trace.detach(), loss)
-                except TypeError:
-                    iter_callback(k, p_sat, result.mu_trace.detach())
+                iter_callback(k, p_sat, result.mu_trace.detach(), loss)
 
             if best_p >= alpha:
                 converged_iters += 1
